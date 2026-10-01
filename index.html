@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Пиксельный холст</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    background: #1a1a1a;
+    color: #fff;
+    font-family: 'Segoe UI', sans-serif;
+    overflow: hidden;
+    height: 100%;
+    width: 100%;
+    overscroll-behavior: none;
+  }
+
+  #viewport {
+    position: fixed;
+    inset: 0;
+    background: #ffffff;
+    overflow: hidden;
+    touch-action: none;
+    cursor: crosshair;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  #viewport.move-mode { cursor: grab; }
+  #viewport.move-mode:active { cursor: grabbing; }
+
+  #canvasWrap {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  #imagesLayer {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 1;
+  }
+
+  .img-block {
+    position: absolute;
+    pointer-events: none;
+    will-change: transform, left, top, width, height;
+    transform-origin: top left;
+  }
+
+  .img-block img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    user-select: none;
+    -webkit-user-drag: none;
+    -webkit-touch-callout: none;
+    object-fit: contain;
+  }
+
+  .img-block canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+
+  .img-block.active img {
+    outline: 2px dashed #4a90d9;
+    outline-offset: 2px;
+  }
+
+  #canvas {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    touch-action: none;
+    z-index: 2;
+  }
+
+  #toolbar {
+    position: fixed;
+    top: 12px; left: 12px;
+    background: rgba(30,30,30,0.96);
+    border: 1px solid #444;
+    border-radius: 10px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 100;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    font-size: 13px;
+    width: 250px;
+    touch-action: auto;
+  }
+
+  #toolbar.hidden { display: none; }
+
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .row label { font-size: 12px; color: #bbb; min-width: 46px; }
+
+  button {
+    background: #3a3a3a;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 6px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.15s;
+    flex: 1;
+    white-space: nowrap;
+    touch-action: auto;
+  }
+  button:hover { background: #4a4a4a; }
+  button.active { background: #4a90d9; border-color: #4a90d9; }
+  button.danger { background: #a33; border-color: #a33; }
+  button.danger:hover { background: #c44; }
+
+  input[type="range"] { width: 100%; touch-action: auto; }
+  input[type="number"] {
+    width: 62px;
+    background: #2a2a2a;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 4px;
+    font-size: 12px;
+    touch-action: auto;
+  }
+  input[type="color"] {
+    width: 42px; height: 30px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #2a2a2a;
+    cursor: pointer;
+    padding: 2px;
+    touch-action: auto;
+  }
+
+  .section-title {
+    font-size: 11px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-top: 1px solid #444;
+    padding-top: 8px;
+    margin-top: 4px;
+  }
+
+  #toggleBar {
+    position: fixed;
+    top: 12px; left: 12px;
+    z-index: 101;
+    width: 42px; height: 42px;
+    border-radius: 8px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    background: rgba(30,30,30,0.95);
+    border: 1px solid #444;
+    cursor: pointer;
+    color: #fff;
+  }
+  #toggleBar.visible { display: flex; }
+
+  .hint { font-size: 11px; color: #777; line-height: 1.4; }
+
+  #sizePreviewWrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: #222;
+    border: 1px solid #555;
+    border-radius: 4px;
+    flex: 0 0 auto;
+  }
+  #sizePreview { border-radius: 50%; background: #000; }
+
+  #imgInfo {
+    font-size: 11px;
+    color: #8ab;
+    padding: 4px 6px;
+    background: #222;
+    border-radius: 4px;
+    display: none;
+    word-break: break-all;
+  }
+
+  /* Палитра свечения */
+  #glowPalette {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+  .glow-swatch {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    border: 2px solid #333;
+    cursor: pointer;
+    flex: 0 0 auto;
+    transition: transform 0.12s, border-color 0.12s;
+  }
+  .glow-swatch:hover { transform: scale(1.15); }
+  .glow-swatch.active { border-color: #fff; transform: scale(1.2); }
+
+  #glowControls {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    background: #222;
+    border-radius: 6px;
+    border: 1px solid #444;
+  }
+  #glowControls label {
+    font-size: 11px;
+    color: #aaa;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  #glowIndicator {
+    position: fixed;
+    top: 12px; right: 12px;
+    padding: 6px 12px;
+    background: rgba(20,20,20,0.9);
+    border-radius: 8px;
+    font-size: 12px;
+    z-index: 99;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid #444;
+  }
+  #glowIndicator.visible { display: flex; }
+  #glowIndicator .dot {
+    width: 12px; height: 12px; border-radius: 50%;
+  }
+</style>
+</head>
+<body>
+
+<div id="viewport">
+  <div id="canvasWrap">
+    <div id="imagesLayer"></div>
+    <canvas id="canvas" width="1000" height="1000"></canvas>
+  </div>
+</div>
+
+<div id="glowIndicator">
+  <span class="dot" id="glowIndicatorDot"></span>
+  <span id="glowIndicatorText">Свечение</span>
+</div>
+
+<button id="toggleBar" title="Показать панель">☰</button>
+
+<div id="toolbar">
+  <div class="row">
+    <strong style="flex:1">🎨 Инструменты</strong>
+    <button id="hideBtn" style="flex:0; padding:4px 8px" title="Скрыть панель">✕</button>
+  </div>
+
+  <div class="row"><button class="tool active" data-tool="pencil">✏️ Карандаш</button></div>
+  <div class="row"><button class="tool" data-tool="brush">🖌️ Кисть</button></div>
+  <div class="row"><button class="tool" data-tool="marker">🖍️ Маркер</button></div>
+  <div class="row"><button class="tool" data-tool="glow">✨ Свечение</button></div>
+  <div class="row"><button class="tool" data-tool="eraser">🧽 Ластик</button></div>
+
+  <div class="section-title">Режим</div>
+  <div class="row">
+    <button id="drawMode" class="mode active" data-mode="draw">✏️ Рисование</button>
+    <button id="moveMode" class="mode" data-mode="move">✋ Перемещение</button>
+  </div>
+
+  <div class="section-title">Цвет и размер</div>
+  <div class="row">
+    <input type="color" id="color" value="#000000">
+    <input type="range" id="size" min="1" max="120" value="6">
+    <span id="sizeVal" style="min-width:26px;text-align:center">6</span>
+  </div>
+  <div class="row">
+    <div id="sizePreviewWrap"><div id="sizePreview" style="width:20px;height:20px;"></div></div>
+    <span class="hint" id="toolHint" style="flex:1">Карандаш: тонкая чёткая линия</span>
+  </div>
+
+  <div class="section-title">✨ Свечение</div>
+  <div id="glowPalette"></div>
+  <div id="glowControls">
+    <label>Сила <span id="glowIntensityVal">1.0×</span></label>
+    <input type="range" id="glowIntensity" min="0.3" max="3" step="0.1" value="1.0">
+    <label>Радиус <span id="glowRadiusVal">×2.5</span></label>
+    <input type="range" id="glowRadius" min="1" max="5" step="0.1" value="2.5">
+  </div>
+
+  <div class="section-title">Файлы</div>
+  <div class="row"><button id="addImageBtn">📷 Добавить фото</button></div>
+  <input type="file" id="fileInput" accept="image/*" multiple style="display:none">
+
+  <div id="imgInfo"></div>
+
+  <div class="row">
+    <label>Ширина:</label>
+    <input type="number" id="imgW" value="300" min="1">
+    <label>Выс.:</label>
+    <input type="number" id="imgH" value="300" min="1">
+  </div>
+  <div class="row"><button id="applySize">📐 Применить размер</button></div>
+  <div class="row">
+    <button id="scaleUpImg">➕ Больше</button>
+    <button id="scaleDownImg">➖ Меньше</button>
+  </div>
+
+  <div class="section-title">Действия</div>
+  <div class="row"><button id="clearCanvas" class="danger">🗑 Очистить рисунок</button></div>
+  <div class="row"><button id="clearOnImage" class="danger">🧼 Стереть весь рисунок на фото</button></div>
+  <div class="row"><button id="deleteImage" class="danger">❌ Удалить фото</button></div>
+  <div class="row"><button id="deleteAllImages" class="danger">❌ Удалить все фото</button></div>
+
+  <div class="hint">
+    ✨ <b>Свечение</b> — выбери цвет из палитры, настрой силу и радиус, рисуй неоновые линии.<br>
+    🧽 Ластик стирает и на холсте, и на фото.<br>
+    Рисуй на фото — рисунок прилипнет к нему.
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const viewport = document.getElementById('viewport');
+  const canvas = document.getElementById('canvas');
+  const imagesLayer = document.getElementById('imagesLayer');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = false;
+
+  const toolbar = document.getElementById('toolbar');
+  const toggleBar = document.getElementById('toggleBar');
+  const hideBtn = document.getElementById('hideBtn');
+
+  const sizeInput = document.getElementById('size');
+  const sizeVal = document.getElementById('sizeVal');
+  const colorInput = document.getElementById('color');
+  const sizePreview = document.getElementById('sizePreview');
+  const toolHint = document.getElementById('toolHint');
+
+  const fileInput = document.getElementById('fileInput');
+  const addImageBtn = document.getElementById('addImageBtn');
+  const imgW = document.getElementById('imgW');
+  const imgH = document.getElementById('imgH');
+  const applySize = document.getElementById('applySize');
+  const imgInfo = document.getElementById('imgInfo');
+
+  const glowPaletteEl = document.getElementById('glowPalette');
+  const glowIntensity = document.getElementById('glowIntensity');
+  const glowIntensityVal = document.getElementById('glowIntensityVal');
+  const glowRadius = document.getElementById('glowRadius');
+  const glowRadiusVal = document.getElementById('glowRadiusVal');
+  const glowIndicator = document.getElementById('glowIndicator');
+  const glowIndicatorDot = document.getElementById('glowIndicatorDot');
+  const glowIndicatorText = document.getElementById('glowIndicatorText');
+
+  const IMG_CANVAS_RES = 1000;
+
+  const GLOW_COLORS = [
+    { name: 'Красный',    color: '#ff2d2d' },
+    { name: 'Оранжевый',  color: '#ff8a1f' },
+    { name: 'Жёлтый',     color: '#ffe600' },
+    { name: 'Зелёный',    color: '#22ff44' },
+    { name: 'Бирюзовый',  color: '#00ffd5' },
+    { name: 'Голубой',    color: '#22d3ff' },
+    { name: 'Синий',      color: '#3d6bff' },
+    { name: 'Фиолетовый', color: '#a020ff' },
+    { name: 'Розовый',    color: '#ff40a0' },
+    { name: 'Белый',      color: '#ffffff' },
+  ];
+
+  const state = {
+    tool: 'pencil',
+    mode: 'draw',
+    color: '#000000',
+    glowColor: '#00ffd5',
+    glowIntensity: 1.0,
+    glowRadius: 2.5,
+    size: 6,
+    drawing: false,
+    lastX: 0,
+    lastY: 0,
+    drawTarget: null,
+    images: [],
+    activeImage: null,
+  };
+
+  const TOOL_CONFIG = {
+    pencil: { hint: 'Карандаш: тонкая чёткая линия' },
+    brush:  { hint: 'Кисть: плавная линия' },
+    marker: { hint: 'Маркер: однотонная жирная линия' },
+    glow:   { hint: '✨ Свечение: неоновая линия с ореолом' },
+    eraser: { hint: 'Ластик: стирает рисунок и на холсте, и на фото' },
+  };
+
+  // ===== КООРДИНАТЫ =====
+  function getCanvasRect() { return canvas.getBoundingClientRect(); }
+
+  function screenToCanvas(clientX, clientY) {
+    const r = getCanvasRect();
+    return {
+      x: (clientX - r.left) * (canvas.width / r.width),
+      y: (clientY - r.top) * (canvas.height / r.height),
+    };
+  }
+
+  function screenDeltaToCanvas(dx, dy) {
+    const r = getCanvasRect();
+    return {
+      dx: dx * (canvas.width / r.width),
+      dy: dy * (canvas.height / r.height),
+    };
+  }
+
+  // ===== ПАЛИТРА СВЕЧЕНИЯ =====
+  function buildGlowPalette() {
+    GLOW_COLORS.forEach((c, i) => {
+      const el = document.createElement('div');
+      el.className = 'glow-swatch' + (i === 4 ? ' active' : ''); // бирюзовый по умолчанию
+      el.style.background = c.color;
+      el.style.boxShadow = `0 0 6px ${c.color}, 0 0 12px ${c.color}`;
+      el.title = c.name;
+      el.onclick = (e) => {
+        e.stopPropagation();
+        state.glowColor = c.color;
+        document.querySelectorAll('.glow-swatch').forEach(s =>
+          s.classList.toggle('active', s === el));
+        updateSizePreview();
+        updateGlowIndicator();
+      };
+      glowPaletteEl.appendChild(el);
+    });
+  }
+
+  function updateGlowIndicator() {
+    if (state.tool === 'glow') {
+      glowIndicator.classList.add('visible');
+      glowIndicatorDot.style.background = state.glowColor;
+      glowIndicatorDot.style.boxShadow =
+        `0 0 8px ${state.glowColor}, 0 0 16px ${state.glowColor}`;
+      glowIndicatorText.textContent = 'Свечение · ' + state.glowColor.toUpperCase();
+    } else {
+      glowIndicator.classList.remove('visible');
+    }
+  }
+
+  glowIntensity.oninput = (e) => {
+    state.glowIntensity = parseFloat(e.target.value);
+    glowIntensityVal.textContent = state.glowIntensity.toFixed(1) + '×';
+  };
+  glowRadius.oninput = (e) => {
+    state.glowRadius = parseFloat(e.target.value);
+    glowRadiusVal.textContent = '×' + state.glowRadius.toFixed(1);
+  };
+
+  // ===== ИНСТРУМЕНТЫ =====
+  function setTool(tool) {
+    state.tool = tool;
+    document.querySelectorAll('.tool').forEach(b =>
+      b.classList.toggle('active', b.dataset.tool === tool));
+    toolHint.textContent = TOOL_CONFIG[tool].hint;
+    updateSizePreview();
+    updateGlowIndicator();
+  }
+  document.querySelectorAll('.tool').forEach(btn => {
+    btn.onclick = () => setTool(btn.dataset.tool);
+  });
+
+  function setMode(mode) {
+    state.mode = mode;
+    document.querySelectorAll('.mode').forEach(b =>
+      b.classList.toggle('active', b.dataset.mode === mode));
+    viewport.classList.toggle('move-mode', mode === 'move');
+  }
+  document.getElementById('drawMode').onclick = () => setMode('draw');
+  document.getElementById('moveMode').onclick = () => setMode('move');
+
+  // ===== РИСОВАНИЕ =====
+  function paintSegment(context, x0, y0, x1, y1, lineWidth, isGlow) {
+    if (state.tool === 'eraser') {
+      context.save();
+      context.globalCompositeOperation = 'destination-out';
+      context.globalAlpha = 1;
+      context.strokeStyle = 'rgba(0,0,0,1)';
+      context.fillStyle = 'rgba(0,0,0,1)';
+      context.lineWidth = Math.max(1, lineWidth);
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
+
+      context.beginPath();
+      context.moveTo(x0, y0);
+      context.lineTo(x1, y1);
+      context.stroke();
+
+      const r = Math.max(0.5, lineWidth / 2);
+      context.beginPath();
+      context.arc(x1, y1, r, 0, Math.PI * 2);
+      context.fill();
+      context.restore();
+      return;
+    }
+
+    if (isGlow) {
+      context.save();
+      context.globalCompositeOperation = 'lighter'; // настоящий аддитивный «свет»
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
+
+      const color = state.glowColor;
+      const w = Math.max(1, lineWidth);
+      const intensity = state.glowIntensity;
+      const radiusK = state.glowRadius;
+
+      // 1) Широкий мягкий ореол
+      context.shadowColor = color;
+      context.shadowBlur = w * radiusK * 2.2 * intensity;
+      context.strokeStyle = color;
+      context.globalAlpha = 0.55 * Math.min(1.5, intensity);
+      context.lineWidth = w;
+      context.beginPath();
+      context.moveTo(x0, y0);
+      context.lineTo(x1, y1);
+      context.stroke();
+
+      // 2) Средний ореол — плотнее
+      context.shadowBlur = w * radiusK * 1.2 * intensity;
+      context.globalAlpha = 0.85 * Math.min(1.5, intensity);
+      context.lineWidth = w;
+      context.beginPath();
+      context.moveTo(x0, y0);
+      context.lineTo(x1, y1);
+      context.stroke();
+
+      // 3) Яркое ядро — почти белое
+      context.shadowBlur = w * radiusK * 0.5 * intensity;
+      context.shadowColor = color;
+      context.strokeStyle = '#ffffff';
+      context.globalAlpha = 0.95;
+      context.lineWidth = Math.max(1, w * 0.45);
+      context.beginPath();
+      context.moveTo(x0, y0);
+      context.lineTo(x1, y1);
+      context.stroke();
+
+      // 4) Точки на концах, чтобы стыки сегментов не «рвались»
+      const r = Math.max(0.5, w / 2);
+      context.shadowBlur = w * radiusK * 1.2 * intensity;
+      context.shadowColor = color;
+      context.globalAlpha = 0.85;
+      context.fillStyle = color;
+      context.beginPath();
+      context.arc(x1, y1, r, 0, Math.PI * 2);
+      context.fill();
+
+      context.shadowBlur = w * radiusK * 0.5 * intensity;
+      context.shadowColor = color;
+      context.fillStyle = '#ffffff';
+      context.globalAlpha = 0.95;
+      context.beginPath();
+      context.arc(x1, y1, Math.max(0.5, w * 0.22), 0, Math.PI * 2);
+      context.fill();
+
+      context.restore();
+      return;
+    }
+
+    // Обычные инструменты
+    context.save();
+    context.globalCompositeOperation = 'source-over';
+    context.globalAlpha = 1;
+    context.strokeStyle = state.color;
+    context.fillStyle = state.color;
+    context.lineWidth = Math.max(1, lineWidth);
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+
+    context.beginPath();
+    context.moveTo(x0, y0);
+    context.lineTo(x1, y1);
+    context.stroke();
+
+    const r = Math.max(0.5, lineWidth / 2);
+    context.beginPath();
+    context.arc(x1, y1, r, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+
+  function drawToTarget(x0, y0, x1, y1) {
+    if (!state.drawTarget) return;
+
+    if (state.drawTarget.type === 'image') {
+      const im = state.drawTarget.im;
+      const sx = im.canvas.width / im.w;
+      const sy = im.canvas.height / im.h;
+
+      const lx0 = (x0 - im.x) * sx;
+      const ly0 = (y0 - im.y) * sy;
+      const lx1 = (x1 - im.x) * sx;
+      const ly1 = (y1 - im.y) * sy;
+
+      const localWidth = state.size * Math.max(sx, sy);
+      paintSegment(im.lctx, lx0, ly0, lx1, ly1, localWidth, state.tool === 'glow');
+    } else {
+      paintSegment(ctx, x0, y0, x1, y1, state.size, state.tool === 'glow');
+    }
+  }
+
+  function drawDot(x, y) { drawToTarget(x, y, x, y); }
+
+  function drawSmooth(x0, y0, x1, y1) {
+    const dx = x1 - x0, dy = y1 - y0;
+    const dist = Math.hypot(dx, dy);
+    const stepDiv = state.tool === 'glow' ? 4 : 3;
+    const step = Math.max(1, state.size / stepDiv);
+
+    if (dist <= step) { drawToTarget(x0, y0, x1, y1); return; }
+
+    const n = Math.ceil(dist / step);
+    let px = x0, py = y0;
+    for (let i = 1; i <= n; i++) {
+      const t = i / n;
+      const nx = x0 + dx * t, ny = y0 + dy * t;
+      drawToTarget(px, py, nx, ny);
+      px = nx; py = ny;
+    }
+  }
+
+  function updateSizePreview() {
+    const s = Math.max(4, Math.min(30, state.size));
+    sizePreview.style.width = s + 'px';
+    sizePreview.style.height = s + 'px';
+    sizePreview.style.boxShadow = 'none';
+
+    if (state.tool === 'eraser') {
+      sizePreview.style.background =
+        'repeating-linear-gradient(45deg,#888,#888 4px,#ccc 4px,#ccc 8px)';
+    } else if (state.tool === 'glow') {
+      sizePreview.style.background = state.glowColor;
+      sizePreview.style.boxShadow =
+        `0 0 8px ${state.glowColor}, 0 0 16px ${state.glowColor}`;
+    } else {
+      sizePreview.style.background = state.color;
+    }
+  }
+
+  sizeInput.oninput = (e) => {
+    state.size = parseInt(e.target.value, 10);
+    sizeVal.textContent = state.size;
+    updateSizePreview();
+  };
+  colorInput.oninput = (e) => {
+    state.color = e.target.value;
+    updateSizePreview();
+  };
+
+  // ===== ГЕОМЕТРИЯ ФОТО =====
+  function layoutImage(im) {
+    const pctX = (im.x / canvas.width) * 100;
+    const pctY = (im.y / canvas.height) * 100;
+    const pctW = (im.w / canvas.width) * 100;
+    const pctH = (im.h / canvas.height) * 100;
+    im.el.style.left = pctX + '%';
+    im.el.style.top = pctY + '%';
+    im.el.style.width = pctW + '%';
+    im.el.style.height = pctH + '%';
+  }
+
+  function setActiveImage(im) {
+    if (state.activeImage && state.activeImage.el) {
+      state.activeImage.el.classList.remove('active');
+    }
+    state.activeImage = im;
+    if (im && im.el) {
+      im.el.classList.add('active');
+      updateImgInfo(im);
+    } else {
+      updateImgInfo(null);
+    }
+  }
+
+  function updateImgInfo(im) {
+    if (!im) { imgInfo.style.display = 'none'; return; }
+    imgInfo.style.display = 'block';
+    imgInfo.textContent =
+      `Фото ${Math.round(im.w)}×${Math.round(im.h)} @ (${Math.round(im.x)}, ${Math.round(im.y)})`;
+    imgW.value = Math.round(im.w);
+    imgH.value = Math.round(im.h);
+  }
+
+  function hitTestImage(x, y) {
+    for (let i = state.images.length - 1; i >= 0; i--) {
+      const im = state.images[i];
+      if (x >= im.x && x <= im.x + im.w && y >= im.y && y <= im.y + im.h) {
+        return im;
+      }
+    }
+    return null;
+  }
+
+  // ===== ВВОД / ЖЕСТЫ =====
+  const pointers = new Map();
+  let drawPointerId = null;
+  let dragState = null;
+  let pinchState = null;
+
+  function onPointerDown(e) {
+    if (e.target.closest('#toolbar') || e.target.closest('#toggleBar') ||
+        e.target.closest('#glowIndicator')) return;
+
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (state.mode === 'move') {
+      if (pointers.size === 1) {
+        const p = screenToCanvas(e.clientX, e.clientY);
+        const hit = hitTestImage(p.x, p.y);
+        if (hit) {
+          setActiveImage(hit);
+          dragState = {
+            im: hit,
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            startImgX: hit.x,
+            startImgY: hit.y,
+          };
+        } else {
+          setActiveImage(null);
+        }
+        return;
+      }
+
+      if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()];
+        const pa = screenToCanvas(a.x, a.y);
+        const pb = screenToCanvas(b.x, b.y);
+        let target = hitTestImage(pa.x, pa.y) || hitTestImage(pb.x, pb.y);
+        if (!target && dragState) target = dragState.im;
+        if (!target) target = state.activeImage;
+        if (!target) return;
+
+        setActiveImage(target);
+        dragState = null;
+
+        const midClientX = (a.x + b.x) / 2;
+        const midClientY = (a.y + b.y) / 2;
+        const midCanvas = screenToCanvas(midClientX, midClientY);
+
+        pinchState = {
+          im: target,
+          startDist: Math.hypot(a.x - b.x, a.y - b.y),
+          startW: target.w,
+          startH: target.h,
+          relX: (midCanvas.x - target.x) / target.w,
+          relY: (midCanvas.y - target.y) / target.h,
+        };
+        return;
+      }
+      return;
+    }
+
+    // === РИСОВАНИЕ ===
+    if (drawPointerId !== null) return;
+    drawPointerId = e.pointerId;
+
+    const p = screenToCanvas(e.clientX, e.clientY);
+
+    const hit = hitTestImage(p.x, p.y);
+    if (hit) {
+      state.drawTarget = { type: 'image', im: hit };
+      setActiveImage(hit);
+    } else {
+      state.drawTarget = { type: 'global' };
+    }
+
+    state.drawing = true;
+    state.lastX = p.x;
+    state.lastY = p.y;
+    drawDot(p.x, p.y);
+  }
+
+  function onPointerMove(e) {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (state.mode === 'move') {
+      if (pinchState && pointers.size >= 2) {
+        const [a, b] = [...pointers.values()];
+        const dist = Math.hypot(a.x - b.x, a.y - b.y);
+        const k = dist / pinchState.startDist;
+
+        const newW = Math.max(20, pinchState.startW * k);
+        const newH = Math.max(20, pinchState.startH * k);
+
+        const midClientX = (a.x + b.x) / 2;
+        const midClientY = (a.y + b.y) / 2;
+        const midCanvas = screenToCanvas(midClientX, midClientY);
+
+        const im = pinchState.im;
+        im.w = newW;
+        im.h = newH;
+        im.x = midCanvas.x - pinchState.relX * newW;
+        im.y = midCanvas.y - pinchState.relY * newH;
+
+        layoutImage(im);
+        updateImgInfo(im);
+        return;
+      }
+
+      if (dragState && pointers.size === 1) {
+        const { dx, dy } = screenDeltaToCanvas(
+          e.clientX - dragState.startClientX,
+          e.clientY - dragState.startClientY
+        );
+        dragState.im.x = dragState.startImgX + dx;
+        dragState.im.y = dragState.startImgY + dy;
+        layoutImage(dragState.im);
+        updateImgInfo(dragState.im);
+        return;
+      }
+      return;
+    }
+
+    if (state.drawing && e.pointerId === drawPointerId) {
+      const p = screenToCanvas(e.clientX, e.clientY);
+      drawSmooth(state.lastX, state.lastY, p.x, p.y);
+      state.lastX = p.x;
+      state.lastY = p.y;
+    }
+  }
+
+  function onPointerUp(e) {
+    pointers.delete(e.pointerId);
+
+    if (e.pointerId === drawPointerId) {
+      drawPointerId = null;
+      state.drawing = false;
+      state.drawTarget = null;
+    }
+    if (pinchState && pointers.size < 2) pinchState = null;
+    if (dragState && pointers.size === 0) dragState = null;
+  }
+
+  viewport.addEventListener('pointerdown', onPointerDown);
+  viewport.addEventListener('pointermove', onPointerMove);
+  viewport.addEventListener('pointerup', onPointerUp);
+  viewport.addEventListener('pointercancel', onPointerUp);
+  viewport.addEventListener('pointerleave', onPointerUp);
+  viewport.addEventListener('contextmenu', e => e.preventDefault());
+
+  viewport.addEventListener('wheel', (e) => {
+    if (state.mode !== 'move') return;
+    const p = screenToCanvas(e.clientX, e.clientY);
+    const hit = hitTestImage(p.x, p.y) || state.activeImage;
+    if (!hit) return;
+    e.preventDefault();
+    setActiveImage(hit);
+
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const relX = (p.x - hit.x) / hit.w;
+    const relY = (p.y - hit.y) / hit.h;
+    hit.w = Math.max(20, hit.w * factor);
+    hit.h = Math.max(20, hit.h * factor);
+    hit.x = p.x - relX * hit.w;
+    hit.y = p.y - relY * hit.h;
+    layoutImage(hit);
+    updateImgInfo(hit);
+  }, { passive: false });
+
+  // ===== ЗАГРУЗКА ФОТО =====
+  addImageBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', (e) => {
+    const files = [...e.target.files];
+    if (!files.length) return;
+    files.forEach((file, idx) => loadImageFile(file, idx));
+    fileInput.value = '';
+  });
+
+  function loadImageFile(file, idx) {
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const natW = img.naturalWidth || img.width || 200;
+        const natH = img.naturalHeight || img.height || 200;
+        const aspect = natW / natH;
+
+        const maxDim = Math.min(canvas.width, canvas.height) * 0.4;
+        let w, h;
+        if (natW >= natH) {
+          w = Math.min(natW, maxDim);
+          h = w / aspect;
+        } else {
+          h = Math.min(natH, maxDim);
+          w = h * aspect;
+        }
+        w = Math.round(w);
+        h = Math.round(h);
+
+        const block = document.createElement('div');
+        block.className = 'img-block';
+
+        const imgEl = document.createElement('img');
+        imgEl.src = ev.target.result;
+        imgEl.draggable = false;
+
+        const localCanvas = document.createElement('canvas');
+        localCanvas.width = IMG_CANVAS_RES;
+        localCanvas.height = IMG_CANVAS_RES;
+
+        block.appendChild(imgEl);
+        block.appendChild(localCanvas);
+        imagesLayer.appendChild(block);
+
+        const offset = (idx || 0) * 30;
+        const obj = {
+          el: block,
+          canvas: localCanvas,
+          lctx: localCanvas.getContext('2d'),
+          x: Math.round((canvas.width - w) / 2) + offset,
+          y: Math.round((canvas.height - h) / 2) + offset,
+          w, h,
+          aspect,
+        };
+        obj.lctx.imageSmoothingEnabled = false;
+
+        layoutImage(obj);
+        state.images.push(obj);
+        setActiveImage(obj);
+        setMode('move');
+      };
+      img.onerror = () => alert('Не удалось загрузить изображение.');
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ===== РАЗМЕР =====
+  imgW.addEventListener('input', () => {
+    if (!state.activeImage) return;
+    const v = Math.max(1, parseInt(imgW.value, 10) || 1);
+    const im = state.activeImage;
+    imgH.value = Math.round(v / im.aspect);
+  });
+  imgH.addEventListener('input', () => {
+    if (!state.activeImage) return;
+    const v = Math.max(1, parseInt(imgH.value, 10) || 1);
+    const im = state.activeImage;
+    imgW.value = Math.round(v * im.aspect);
+  });
+
+  applySize.onclick = () => {
+    if (!state.activeImage) {
+      alert('Сначала выберите фото в режиме «Перемещение».');
+      return;
+    }
+    const im = state.activeImage;
+    const w = Math.max(1, parseInt(imgW.value, 10) || 1);
+    const h = w / im.aspect;
+    const cx = im.x + im.w / 2;
+    const cy = im.y + im.h / 2;
+    im.w = w;
+    im.h = h;
+    im.x = cx - w / 2;
+    im.y = cy - h / 2;
+    layoutImage(im);
+    updateImgInfo(im);
+  };
+
+  document.getElementById('scaleUpImg').onclick = () => {
+    if (!state.activeImage) { alert('Сначала выберите фото.'); return; }
+    const im = state.activeImage;
+    const cx = im.x + im.w / 2, cy = im.y + im.h / 2;
+    im.w *= 1.2; im.h *= 1.2;
+    im.x = cx - im.w / 2; im.y = cy - im.h / 2;
+    layoutImage(im); updateImgInfo(im);
+  };
+  document.getElementById('scaleDownImg').onclick = () => {
+    if (!state.activeImage) { alert('Сначала выберите фото.'); return; }
+    const im = state.activeImage;
+    const cx = im.x + im.w / 2, cy = im.y + im.h / 2;
+    im.w = Math.max(20, im.w / 1.2);
+    im.h = Math.max(20, im.h / 1.2);
+    im.x = cx - im.w / 2; im.y = cy - im.h / 2;
+    layoutImage(im); updateImgInfo(im);
+  };
+
+  // ===== УДАЛЕНИЕ =====
+  document.getElementById('deleteImage').onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    let target = state.activeImage;
+    if (!target && state.images.length) {
+      target = state.images[state.images.length - 1];
+    }
+    if (!target) { alert('Нет фото для удаления.'); return; }
+
+    target.el.remove();
+    state.images = state.images.filter(i => i !== target);
+    if (state.activeImage === target) setActiveImage(null);
+  };
+
+  document.getElementById('deleteAllImages').onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!state.images.length) return;
+    if (!confirm('Удалить все изображения?')) return;
+    state.images.forEach(im => im.el.remove());
+    state.images = [];
+    setActiveImage(null);
+  };
+
+  // ===== ОЧИСТКА =====
+  document.getElementById('clearCanvas').onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm('Очистить рисунок на холсте? Рисунок на фото не тронется.')) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  document.getElementById('clearOnImage').onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    let target = state.activeImage;
+    if (!target && state.images.length) target = state.images[state.images.length - 1];
+    if (!target) { alert('Нет выбранного фото.'); return; }
+    if (!confirm('Стереть весь рисунок на этом фото?')) return;
+    target.lctx.clearRect(0, 0, target.canvas.width, target.canvas.height);
+  };
+
+  // ===== СКРЫТИЕ ПАНЕЛИ =====
+  hideBtn.onclick = (e) => {
+    e.stopPropagation();
+    toolbar.classList.add('hidden');
+    toggleBar.classList.add('visible');
+  };
+  toggleBar.onclick = (e) => {
+    e.stopPropagation();
+    toolbar.classList.remove('hidden');
+    toggleBar.classList.remove('visible');
+  };
+
+  // ===== ИНИЦИАЛИЗАЦИЯ =====
+  buildGlowPalette();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  updateSizePreview();
+  updateGlowIndicator();
+
+})();
+</script>
+</body>
+</html>
